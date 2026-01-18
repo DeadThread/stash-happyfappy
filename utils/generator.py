@@ -612,9 +612,68 @@ def generate(j: dict) -> Generator[str, None, str | None]:
     logger.success("Done")
 
 
-def gen_torrent(pipe: Connection, stash_file: dict, announce_url: str, directory: str | None = None) -> list[str] | None:
-    logger.info("Torrent generation disabled; sending empty list")
-    pipe.send([])
+def gen_torrent(
+        pipe: Connection, stash_file: dict, announce_url: str, directory: str | None = None
+) -> list[str] | None:
+    torrent_path = stash_file["path"]
+    max_piece_size = int(math.log(8 * 1024 * 1024, 2))  # = 23, corresponding to 8MB (2^23 bytes)
+    piece_size = min(int(math.log(stash_file["size"] / 2 ** 10, 2)), max_piece_size)
+    tempdir = tempfile.TemporaryDirectory()
+    basename = "".join(c for c in stash_file["basename"] if c in FILENAME_VALID_CHARS)
+
+    target = directory if directory else torrent_path
+
+    temp_path = os.path.join(tempdir.name, basename + ".torrent")
+    torrent_paths = [os.path.join(d, stash_file["basename"] + ".torrent") for d in config.torrent_dirs]
+    logger.debug(f"Saving torrent to {temp_path}")
+
+    if shutil.which("mkbrr") is None:
+        cmd = [
+            "mktorrent",
+            "-l",
+            str(piece_size),
+            "-s",
+            source_for_announce(announce_url),
+            "-a",
+            announce_url,
+            "-p",
+            "-v",
+            "-o",
+            temp_path,
+            target,
+        ]
+    else:
+        cmd = [
+            "mkbrr",
+            "create",
+            "-l",
+            str(piece_size),
+            "-s",
+            source_for_announce(announce_url),
+            "-t",
+            announce_url,
+            "-v",
+            "-o",
+            temp_path,
+            target,
+        ]
+    sanitized = sanitize_announce_url(announce_url)
+    logger.debug(f"Executing: {' '.join(cmd).replace(announce_url, sanitized)}")
+
+    process = subprocess.run(cmd, stdout=subprocess.PIPE, text=False)
+    output = process.stdout.decode("utf-8") # decoding bytes vs setting text=True preserves carriage returns
+    if config.get("backend", "sanitize_logs", False):
+        output = output.replace(announce_url, sanitized)
+    logger.debug(f"mktorrent output:\n{output}")
+    if process.returncode != 0:
+        tempdir.cleanup()
+        logger.error("mktorrent failed, command: " + " ".join(cmd), "Couldn't generate torrent")
+        return
+    for path in torrent_paths:
+        shutil.copy(temp_path, path)
+    tempdir.cleanup()
+    logger.debug(f"Moved torrent to {torrent_paths}")
+    pipe.send(torrent_paths)
 
 
 def gen_media_info(pipe: Connection, path: str) -> None:
