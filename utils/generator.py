@@ -611,6 +611,12 @@ def generate(j: dict) -> Generator[str, None, str | None]:
 
     logger.success("Done")
 
+
+def gen_torrent(pipe: Connection, stash_file: dict, announce_url: str, directory: str | None = None) -> list[str] | None:
+    logger.info("Torrent generation disabled; sending empty list")
+    pipe.send([])
+
+
 def gen_media_info(pipe: Connection, path: str) -> None:
     cmd = [MEDIA_INFO, path]
     pipe.send(subprocess.check_output(cmd, text=True))
